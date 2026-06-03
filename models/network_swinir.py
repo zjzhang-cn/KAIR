@@ -638,8 +638,10 @@ class SwinIR(nn.Module):
         patch_norm (bool): If True, add normalization after patch embedding. Default: True
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
         upscale: Upscale factor. 2/3/4/8 for image SR, 1 for denoising and compress artifact reduction
+        upscale_h: Height upscale factor (for anisotropic SR). Default same as upscale.
+        upscale_w: Width upscale factor (for anisotropic SR). Default same as upscale.
         img_range: Image range. 1. or 255.
-        upsampler: The reconstruction reconstruction module. 'pixelshuffle'/'pixelshuffledirect'/'nearest+conv'/None
+        upsampler: The reconstruction module. 'pixelshuffle'/'pixelshuffledirect'/'nearest+conv'/'aniso'/None
         resi_connection: The convolutional block before residual connection. '1conv'/'3conv'
     """
 
@@ -648,7 +650,8 @@ class SwinIR(nn.Module):
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
+                 use_checkpoint=False, upscale=2, upscale_h=None, upscale_w=None,
+                 img_range=1., upsampler='', resi_connection='1conv',
                  **kwargs):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
@@ -661,6 +664,9 @@ class SwinIR(nn.Module):
         else:
             self.mean = torch.zeros(1, 1, 1, 1)
         self.upscale = upscale
+        self.upscale_h = upscale_h if upscale_h is not None else upscale  # 各向异性SR：H方向倍数
+        self.upscale_w = upscale_w if upscale_w is not None else upscale  # 各向异性SR：W方向倍数
+        self.is_aniso = (self.upscale_h != self.upscale_w)  # 是否各向异性
         self.upsampler = upsampler
         self.window_size = window_size
 
@@ -757,6 +763,15 @@ class SwinIR(nn.Module):
             self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
             self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
             self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        elif self.upsampler == 'aniso':
+            # 各向异性上采样：支持 H 和 W 方向不同倍率
+            # 使用 nearest 插值 + 两层卷积细化，避免 PixelShuffle 的方形限制
+            self.conv_before_upsample = nn.Sequential(nn.Conv2d(embed_dim, num_feat, 3, 1, 1),
+                                                      nn.LeakyReLU(inplace=True))
+            self.conv_up = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_hr = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+            self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
+            self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
         else:
             # for image denoising and JPEG compression artifact reduction
             self.conv_last = nn.Conv2d(embed_dim, num_out_ch, 3, 1, 1)
@@ -828,6 +843,15 @@ class SwinIR(nn.Module):
             x = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
             x = self.lrelu(self.conv_up2(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
             x = self.conv_last(self.lrelu(self.conv_hr(x)))
+        elif self.upsampler == 'aniso':
+            # 各向异性上采样：H 和 W 方向使用不同倍率
+            # 直接使用 F.interpolate 指定 (h_scale, w_scale)，无需逐方向分步
+            x = self.conv_first(x)
+            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_before_upsample(x)
+            x = self.lrelu(self.conv_up(
+                torch.nn.functional.interpolate(x, scale_factor=(self.upscale_h, self.upscale_w), mode='nearest')))
+            x = self.conv_last(self.lrelu(self.conv_hr(x)))
         else:
             # for image denoising and JPEG compression artifact reduction
             x_first = self.conv_first(x)
@@ -836,7 +860,7 @@ class SwinIR(nn.Module):
 
         x = x / self.img_range + self.mean
 
-        return x[:, :, :H*self.upscale, :W*self.upscale]
+        return x[:, :, :H*self.upscale_h, :W*self.upscale_w]
 
     def flops(self):
         flops = 0
