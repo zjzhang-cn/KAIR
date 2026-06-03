@@ -248,6 +248,24 @@ def define_G(opt):
                    cpu_cache_length=opt_net['cpu_cache_length'])
 
     # ----------------------------------------
+    # SwinIR3D
+    # ----------------------------------------
+    elif net_type == 'swinir3d':
+        from models.network_swinir_3d import SwinIR3D as net
+        netG = net(img_size=opt_net['img_size'],
+                   in_chans=opt_net['in_chans'],
+                   embed_dim=opt_net.get('embed_dim', 48),
+                   depths=opt_net.get('depths', [4, 4, 4, 4]),
+                   num_heads=opt_net.get('num_heads', [4, 4, 4, 4]),
+                   window_size=opt_net.get('window_size', [2, 4, 4]),
+                   mlp_ratio=opt_net.get('mlp_ratio', 2),
+                   upscale=opt_net.get('upscale', 2),
+                   upsampler=opt_net.get('upsampler', 'pixelshuffle3d'),
+                   img_range=opt_net.get('img_range', 1.),
+                   use_checkpoint=opt_net.get('use_checkpoint', False),
+                   resi_connection=opt_net.get('resi_connection', '1conv'))
+
+    # ----------------------------------------
     # others
     # ----------------------------------------
     # TODO
@@ -425,8 +443,8 @@ def init_weights(net, init_type='xavier_uniform', init_bn_type='uniform', gain=1
             else:
                 raise NotImplementedError('Initialization method [{:s}] is not implemented'.format(init_bn_type))
 
-    if init_type not in ['default', 'none']:
-        print('Initialization method [{:s} + {:s}], gain is [{:.2f}]'.format(init_type, init_bn_type, gain))
+    if init_type is not None and init_type not in ['default', 'none']:
+        print('Initialization method [{:s} + {:s}], gain is [{:.2f}]'.format(str(init_type), str(init_bn_type), gain))
         fn = functools.partial(init_fn, init_type=init_type, init_bn_type=init_bn_type, gain=gain)
         net.apply(fn)
     else:

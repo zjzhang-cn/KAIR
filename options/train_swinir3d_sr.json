@@ -1,0 +1,87 @@
+{
+  "task": "swinir3d_sr"          // 任务名，输出目录为 {root}/{task}/
+  , "model": "plain"             // 使用 ModelPlain 训练框架（单输入 L → 输出 E，像素损失）
+  , "gpu_ids": [0]
+  , "dist": false
+
+  , "scale": [2, 2, 2]          // 3D 上采样倍率 (sD, sH, sW)，支持各向异性如 [1, 2, 2]
+  , "n_channels": 1              // 通道数：CT/MRI 通常为 1，RGB 视频为 3
+
+  , "merge_bn": false            // SwinIR3D 没有 BN，设为 false
+  , "merge_bn_startpoint": -1
+
+  , "path": {
+    "root": "experiments_3d"     // 输出根目录
+    , "pretrained_netG": null    // 预训练模型路径（可选）
+    , "pretrained_netE": null
+  }
+
+  , "datasets": {
+    "train": {
+      "name": "train_3d"
+      , "dataset_type": "sr3d"    // "sr3d" | "sr3d_aniso_xy" | "sr3d_aniso_z" | "denoise3d"
+      , "dataroot_H": "trainsets/trainH_3d"   // HR 体数据目录（.npy/.nii.gz）
+      , "dataroot_L": null                     // LR 目录（不提供则自动从 HR 下采样生成）
+      , "H_size": [16, 64, 64]    // 3D HR patch 大小 (D, H, W)
+      , "dataloader_shuffle": true
+      , "dataloader_num_workers": 4
+      , "dataloader_batch_size": 1  // 3D 数据显存消耗大，batch_size 设小
+      , "augment": true
+    }
+    , "test": {
+      "name": "test_3d"
+      , "dataset_type": "sr3d"
+      , "dataroot_H": "testsets/testH_3d"
+      , "dataroot_L": null
+      , "augment": false
+    }
+  }
+
+  , "netG": {
+    "net_type": "swinir3d"       // 3D Swin Transformer
+    , "img_size": [16, 64, 64]   // 输入尺寸 (D, H, W)
+    , "in_chans": 1              // 输入通道数
+    , "embed_dim": 48            // 嵌入维数（大模型用 96）
+    , "depths": [4, 4, 4, 4]     // 每层 Swin Block 数量
+    , "num_heads": [4, 4, 4, 4]  // 每层注意力头数
+    , "window_size": [2, 4, 4]   // 3D 窗口大小 (wD, wH, wW)
+                                 // D 方向窗口小（因为 Z 分辨率通常低于 XY）
+    , "mlp_ratio": 2
+    , "upscale": [2, 2, 2]       // 上采样倍率，与 datasets.scale 保持一致
+    , "upsampler": "pixelshuffle3d"  // "pixelshuffle3d" | "interp3d"
+    , "img_range": 1.0
+    , "use_checkpoint": false    // 大模型设为 true 以节省显存
+    , "resi_connection": "1conv"
+
+    , "init_type": "default"     // SwinIR 内部已做 trunc_normal 初始化
+    , "init_bn_type": "uniform"
+    , "init_gain": 0.2
+  }
+
+  , "train": {
+    "G_lossfn_type": "l1"        // L1 损失（适合 CT/MRI 这类数值精度敏感数据）
+    , "G_lossfn_weight": 1.0
+
+    , "E_decay": 0               // EMA（3D 模型大，可不启用）
+
+    , "G_optimizer_type": "adam"
+    , "G_optimizer_lr": 1e-4
+    , "G_optimizer_wd": 0
+    , "G_optimizer_clipgrad": null
+    , "G_optimizer_reuse": false
+
+    , "G_scheduler_type": "MultiStepLR"
+    , "G_scheduler_milestones": [50000, 100000, 200000, 300000]
+    , "G_scheduler_gamma": 0.5
+
+    , "G_regularizer_orthstep": null
+    , "G_regularizer_clipstep": null
+
+    , "G_param_strict": true
+    , "E_param_strict": true
+
+    , "checkpoint_test": 5000    // 每 5000 步验证
+    , "checkpoint_save": 5000    // 每 5000 步保存
+    , "checkpoint_print": 100    // 每 100 步打印日志
+  }
+}

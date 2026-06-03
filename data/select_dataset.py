@@ -78,6 +78,12 @@ def define_Dataset(dataset_opt):
         from data.dataset_video_test import VFI_Vid4 as D
 
 
+    # -------------------------------------------------
+    # 3D volumetric data for SwinIR3D
+    # -------------------------------------------------
+    elif dataset_type in ['sr3d', 'sr3d_aniso_xy', 'sr3d_aniso_z', 'denoise3d', 'plain3d']:
+        from data.dataset_3d import Dataset3D as D
+
     # -----------------------------------------
     # common
     # -----------------------------------------
